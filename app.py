@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import BotCommand, LinkPreviewOptions, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -25,9 +25,7 @@ from paper_sources import search_all_sources
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN"
-)
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 SEMANTIC_SCHOLAR_KEY = os.getenv(
     "SEMANTIC_SCHOLAR_API_KEY",
@@ -40,6 +38,10 @@ DISPLAY_LIMIT = 4
 CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 ALERT_DELAY_SECONDS = 3
 
+NO_LINK_PREVIEW = LinkPreviewOptions(
+    is_disabled=True,
+)
+
 
 def active_source_names() -> list[str]:
     """Return the currently active sources."""
@@ -51,24 +53,18 @@ def active_source_names() -> list[str]:
     ]
 
     if SEMANTIC_SCHOLAR_KEY:
-        sources.append(
-            "Semantic Scholar"
-        )
+        sources.append("Semantic Scholar")
 
     return sources
 
 
-def format_authors(
-    authors: list[str],
-) -> str:
+def format_authors(authors: list[str]) -> str:
     """Create a short author list."""
 
     if not authors:
         return "Unknown"
 
-    author_text = ", ".join(
-        authors[:3]
-    )
+    author_text = ", ".join(authors[:3])
 
     if len(authors) > 3:
         author_text += ", and others"
@@ -82,7 +78,7 @@ def choose_diverse_papers(
 ) -> list[dict]:
     """Select papers from different sources where possible."""
 
-    selected = []
+    selected: list[dict] = []
     selected_keys = set()
     used_sources = set()
 
@@ -97,6 +93,7 @@ def choose_diverse_papers(
 
         selected.append(paper)
         used_sources.add(source)
+
         selected_keys.add(
             paper.get("paper_key")
             or paper.get("url")
@@ -115,9 +112,7 @@ def choose_diverse_papers(
             continue
 
         selected.append(paper)
-        selected_keys.add(
-            paper_identifier
-        )
+        selected_keys.add(paper_identifier)
 
         if len(selected) >= limit:
             break
@@ -143,38 +138,103 @@ def format_paper_notification(
     )
 
 
+async def set_bot_commands(
+    application: Application,
+) -> None:
+    """Register commands in Telegram's command menu."""
+
+    commands = [
+        BotCommand(
+            "start",
+            "Show the welcome message and instructions",
+        ),
+        BotCommand(
+            "watch",
+            "Create a research-paper alert",
+        ),
+        BotCommand(
+            "list",
+            "Show your saved alerts",
+        ),
+        BotCommand(
+            "checknow",
+            "Check your saved alerts now",
+        ),
+        BotCommand(
+            "delete",
+            "Delete a saved alert by its ID",
+        ),
+        BotCommand(
+            "sources",
+            "Show available academic sources",
+        ),
+    ]
+
+    await application.bot.set_my_commands(commands)
+
+    print(
+        "Telegram command menu registered successfully."
+    )
+
+
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Show the bot commands."""
+    """Show the welcome message and all available commands."""
 
     del context
+
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    user = update.effective_user
+
+    first_name = (
+        user.first_name
+        if user and user.first_name
+        else "Researcher"
+    )
 
     sources_text = "\n".join(
         f"• {source}"
         for source in active_source_names()
     )
 
-    await update.effective_message.reply_text(
-        "Hello! 👋\n\n"
-        "I am your Research Paper Alert Bot.\n\n"
-        f"Active sources:\n{sources_text}\n\n"
-        "Create an alert:\n"
-        "/watch your research topic\n\n"
-        "View sources:\n"
-        "/sources\n\n"
-        "View saved alerts:\n"
-        "/list\n\n"
-        "Check immediately:\n"
-        "/checknow\n\n"
-        "Delete an alert:\n"
-        "/delete alert_id\n\n"
+    welcome_text = (
+        f"👋 Welcome, {first_name}!\n\n"
+        "📚 I am the Research Paper Alert Bot.\n"
+        "I monitor academic sources and notify you "
+        "when unseen papers are found for your topics.\n\n"
+        f"🌐 Active sources:\n{sources_text}\n\n"
+        "📌 Available commands\n\n"
+        "🔎 /watch <topic>\n"
+        "Create and save a research-paper alert.\n"
         "Example:\n"
-        "/watch artificial intelligence "
-        "in healthcare\n\n"
-        "Saved alerts are checked "
-        "automatically once per day."
+        "/watch pharmaceutical drug delivery systems\n\n"
+        "📋 /list\n"
+        "Show all your saved alerts and alert IDs.\n\n"
+        "🔄 /checknow\n"
+        "Check all your saved topics immediately.\n\n"
+        "🗑️ /delete <alert_id>\n"
+        "Permanently delete a saved alert.\n"
+        "Example:\n"
+        "/delete 1\n\n"
+        "🌐 /sources\n"
+        "Show the academic sources currently available.\n\n"
+        "ℹ️ /start\n"
+        "Show this welcome message again.\n\n"
+        "Saved alerts are checked automatically "
+        "once per day while the bot is running.\n\n"
+        "To begin, send:\n"
+        "/watch your research topic"
+    )
+
+    await message.reply_text(
+        welcome_text,
+        link_preview_options=NO_LINK_PREVIEW,
     )
 
 
@@ -185,6 +245,11 @@ async def sources_command(
     """Show active paper sources."""
 
     del context
+
+    message = update.effective_message
+
+    if message is None:
+        return
 
     source_lines = [
         "📚 Active research-paper sources:"
@@ -201,7 +266,7 @@ async def sources_command(
             "for API key"
         )
 
-    await update.effective_message.reply_text(
+    await message.reply_text(
         "\n".join(source_lines)
     )
 
@@ -212,8 +277,14 @@ async def watch(
 ) -> None:
     """Create an alert and show matching papers."""
 
+    message = update.effective_message
+    chat = update.effective_chat
+
+    if message is None or chat is None:
+        return
+
     if not context.args:
-        await update.effective_message.reply_text(
+        await message.reply_text(
             "Please write a research topic "
             "after /watch.\n\n"
             "Example:\n"
@@ -226,19 +297,22 @@ async def watch(
         context.args
     ).strip()
 
-    chat_id = update.effective_chat.id
+    chat_id = chat.id
 
-    status_message = (
-        await update.effective_message.reply_text(
-            "🔎 Searching available sources for:\n"
-            f"{research_topic}"
-        )
+    status_message = await message.reply_text(
+        "🔎 Searching available sources for:\n"
+        f"{research_topic}"
     )
 
     try:
-        papers, successful_sources = await search_all_sources(
+        (
+            papers,
+            successful_sources,
+        ) = await search_all_sources(
             research_topic,
-            max_results_per_source=SEARCH_LIMIT_PER_SOURCE,
+            max_results_per_source=(
+                SEARCH_LIMIT_PER_SOURCE
+            ),
         )
 
     except Exception as error:
@@ -269,11 +343,18 @@ async def watch(
             "ℹ️ This topic is already "
             "in your watch list."
         )
+
     else:
         baseline_count = save_existing_papers(
             alert_id,
             papers,
         )
+
+        if successful_sources:
+            mark_sources_initialized(
+                alert_id,
+                successful_sources,
+            )
 
         saving_message = (
             "✅ Topic saved successfully!\n"
@@ -313,7 +394,8 @@ async def watch(
     )
 
     await status_message.edit_text(
-        "\n\n".join(response_parts)
+        "\n\n".join(response_parts),
+        link_preview_options=NO_LINK_PREVIEW,
     )
 
 
@@ -325,13 +407,18 @@ async def list_topics(
 
     del context
 
-    chat_id = update.effective_chat.id
+    message = update.effective_message
+    chat = update.effective_chat
+
+    if message is None or chat is None:
+        return
+
     subscriptions = get_subscriptions(
-        chat_id
+        chat.id
     )
 
     if not subscriptions:
-        await update.effective_message.reply_text(
+        await message.reply_text(
             "You do not have any saved alerts.\n\n"
             "Create one using:\n"
             "/watch your research topic"
@@ -348,7 +435,12 @@ async def list_topics(
             f"{subscription['research_topic']}"
         )
 
-    await update.effective_message.reply_text(
+    response_lines.append(
+        "\nDelete an alert using:\n"
+        "/delete alert_id"
+    )
+
+    await message.reply_text(
         "\n\n".join(response_lines)
     )
 
@@ -359,11 +451,17 @@ async def delete_topic(
 ) -> None:
     """Delete an alert permanently."""
 
+    message = update.effective_message
+    chat = update.effective_chat
+
+    if message is None or chat is None:
+        return
+
     if (
         len(context.args) != 1
         or not context.args[0].isdigit()
     ):
-        await update.effective_message.reply_text(
+        await message.reply_text(
             "Please provide one numeric ID.\n\n"
             "Example:\n"
             "/delete 2"
@@ -374,21 +472,20 @@ async def delete_topic(
         context.args[0]
     )
 
-    chat_id = update.effective_chat.id
-
     deleted = delete_subscription(
-        chat_id,
+        chat.id,
         alert_id,
     )
 
     if deleted:
-        await update.effective_message.reply_text(
+        await message.reply_text(
             f"🗑️ Alert {alert_id} was deleted.\n"
             "No more notifications will be "
             "sent for that topic."
         )
+
     else:
-        await update.effective_message.reply_text(
+        await message.reply_text(
             "I could not find that alert.\n"
             "Use /list to see your alert IDs."
         )
@@ -401,27 +498,38 @@ async def process_subscriptions(
     """
     Check subscriptions for new papers.
 
-    New research sources are initialized first so their
-    older papers are not incorrectly sent as new.
+    Newly enabled research sources are initialized first so
+    their older papers are not incorrectly sent as new.
     """
 
     new_count = 0
     initialized_alert_count = 0
     failed_count = 0
 
-    for index, subscription in enumerate(subscriptions):
-        alert_id = int(subscription["id"])
-        chat_id = int(subscription["chat_id"])
-        topic = str(subscription["research_topic"])
+    for index, subscription in enumerate(
+        subscriptions
+    ):
+        alert_id = int(
+            subscription["id"]
+        )
+
+        chat_id = int(
+            subscription["chat_id"]
+        )
+
+        topic = str(
+            subscription["research_topic"]
+        )
 
         try:
-            papers, successful_sources = (
-                await search_all_sources(
-                    topic,
-                    max_results_per_source=(
-                        SEARCH_LIMIT_PER_SOURCE
-                    ),
-                )
+            (
+                papers,
+                successful_sources,
+            ) = await search_all_sources(
+                topic,
+                max_results_per_source=(
+                    SEARCH_LIMIT_PER_SOURCE
+                ),
             )
 
         except Exception as error:
@@ -434,8 +542,10 @@ async def process_subscriptions(
             successful_sources = set()
 
         if papers or successful_sources:
-            initialized_sources = get_initialized_sources(
-                alert_id
+            initialized_sources = (
+                get_initialized_sources(
+                    alert_id
+                )
             )
 
             new_sources = (
@@ -443,8 +553,8 @@ async def process_subscriptions(
                 - initialized_sources
             )
 
-            # When a source is used for the first time,
-            # record its existing papers without notifying.
+            # Record old papers from a newly enabled source
+            # without sending them as new notifications.
             if new_sources:
                 baseline_papers = [
                     paper
@@ -471,8 +581,6 @@ async def process_subscriptions(
                     paper.get("source", "")
                 )
 
-                # Do not notify about old papers from
-                # a source initialized during this check.
                 if source in new_sources:
                     continue
 
@@ -503,7 +611,9 @@ async def process_subscriptions(
                             topic,
                             paper,
                         ),
-                        link_preview_options=NO_LINK_PREVIEW,
+                        link_preview_options=(
+                            NO_LINK_PREVIEW
+                        ),
                     )
 
                     new_count += 1
@@ -525,29 +635,34 @@ async def process_subscriptions(
         failed_count,
     )
 
+
 async def check_now(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     """Manually check the user's alerts."""
 
-    chat_id = update.effective_chat.id
+    message = update.effective_message
+    chat = update.effective_chat
+
+    if message is None or chat is None:
+        return
 
     subscriptions = get_subscriptions(
-        chat_id
+        chat.id
     )
 
     if not subscriptions:
-        await update.effective_message.reply_text(
-            "You do not have alerts to check."
+        await message.reply_text(
+            "You do not have alerts to check.\n\n"
+            "Create one using:\n"
+            "/watch your research topic"
         )
         return
 
-    status_message = (
-        await update.effective_message.reply_text(
-            f"🔄 Checking "
-            f"{len(subscriptions)} alert(s)..."
-        )
+    status_message = await message.reply_text(
+        f"🔄 Checking "
+        f"{len(subscriptions)} alert(s)..."
     )
 
     (
@@ -566,7 +681,7 @@ async def check_now(
 
     if initialized_count:
         summary.append(
-            "Older alerts initialized: "
+            "New sources initialized: "
             f"{initialized_count}"
         )
 
@@ -589,7 +704,7 @@ async def check_now(
 async def automatic_check(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Automatically check all alerts."""
+    """Automatically check all saved alerts."""
 
     subscriptions = (
         get_all_subscriptions()
@@ -620,11 +735,12 @@ async def automatic_check(
 
 
 def main() -> None:
-    """Create and run the bot."""
+    """Create and run the Telegram bot."""
 
     if not BOT_TOKEN:
         raise RuntimeError(
-            "Telegram token was not found."
+            "Telegram token was not found. "
+            "Add TELEGRAM_BOT_TOKEN to your .env file."
         )
 
     initialize_database()
@@ -632,6 +748,7 @@ def main() -> None:
     application = (
         Application.builder()
         .token(BOT_TOKEN)
+        .post_init(set_bot_commands)
         .build()
     )
 
@@ -643,12 +760,15 @@ def main() -> None:
     application.job_queue.run_repeating(
         automatic_check,
         interval=CHECK_INTERVAL_SECONDS,
-        first=60,
+        first=CHECK_INTERVAL_SECONDS,
         name="automatic-paper-check",
     )
 
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start,
+        )
     )
 
     application.add_handler(
@@ -659,7 +779,10 @@ def main() -> None:
     )
 
     application.add_handler(
-        CommandHandler("watch", watch)
+        CommandHandler(
+            "watch",
+            watch,
+        )
     )
 
     application.add_handler(
