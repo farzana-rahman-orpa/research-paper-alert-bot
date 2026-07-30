@@ -1,0 +1,74 @@
+DEPLOYMENT PREPARATION
+
+1. Stop the local bot with Control + C.
+
+2. Back up the complete project folder.
+
+3. Copy these files into the project folder:
+   - database.py
+   - requirements.txt
+   - railway.json
+   - .python-version
+   - .env.example
+   - .gitignore
+
+4. Do not replace or upload your real .env file.
+
+5. Test locally:
+   python app.py
+
+6. Confirm the terminal prints a local database path ending in:
+   research-paper-alert-bot/paperwatch.db
+
+7. Initialize Git:
+   git init
+   git add .
+   git status
+
+8. Before committing, confirm these are NOT listed:
+   - .env
+   - .venv/
+   - paperwatch.db
+
+9. Commit:
+   git commit -m "Prepare research paper alert bot for deployment"
+   git branch -M main
+
+10. Create an empty GitHub repository named:
+    research-paper-alert-bot
+
+11. Connect and push. Replace YOUR_GITHUB_USERNAME:
+    git remote add origin https://github.com/YOUR_GITHUB_USERNAME/research-paper-alert-bot.git
+    git push -u origin main
+
+RAILWAY SETUP
+
+1. Create a Railway project and choose Deploy from GitHub Repo.
+2. Select research-paper-alert-bot.
+3. Add these Variables:
+   TELEGRAM_BOT_TOKEN=<real token>
+   CROSSREF_CONTACT_EMAIL=<real email>
+   SEMANTIC_SCHOLAR_API_KEY=<leave absent until approved>
+   DATABASE_PATH=/data/paperwatch.db
+4. Attach a Railway Volume to the bot service.
+5. Set the volume mount path to:
+   /data
+6. Deploy.
+7. Open deployment logs and confirm:
+   Research Paper Alert Bot is running...
+   SQLite database ready at: /data/paperwatch.db
+8. Stop the bot running on your Mac. Do not keep local and cloud polling
+   active at the same time.
+9. Test Telegram:
+   /start
+   /sources
+   /list
+   /watch pharmaceutical drug delivery systems
+   /checknow
+
+IMPORTANT
+
+Your local paperwatch.db is not automatically uploaded to Railway.
+The cloud deployment will start with an empty database unless you manually
+copy the database file to the mounted Railway volume. For a small passion
+project, recreating alerts using /watch is the simplest option.

@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+paperwatch.db
+*.db-journal
+.DS_Store
+.vscode/
